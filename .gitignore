@@ -1,0 +1,58 @@
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editors
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.code-workspace
+*.iml
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+logs/
+*.log
+dist/
+build/
+.cache/
+
+# Env files
+.env
+.env.*
+
+# Arduino / ESP32 / PlatformIO build outputs
+*.bin
+*.hex
+*.elf
+*.map
+*.lst
+*.d
+*.o
+*.a
+*.lib
+*.obj
+*.pdb
+*.srec
+*.eep
+*.su
+*.pi
+*.slo
+*.lo
+*.dep
+*.core
+*.i
+*.ii
+*.dSYM/
+out/
+.pio/
+.pioenvs/
