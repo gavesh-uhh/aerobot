@@ -28,12 +28,12 @@ const int PIN_BUZZER = 7;     // Buzzer
 // =====================================================
 
 const int PROBE_OFFSET_DEG = 45;              // Servo offset for side probing (± from center)
-const unsigned long PROBE_INTERVAL_MS = 100;  // Time between probe attempts while moving forward
+const unsigned long PROBE_INTERVAL_MS = 240;  // Time between probe attempts while moving forward
 const unsigned long PROBE_SETTLE_MS = 40;     // Extra settle time at probe angle (ms)
 const unsigned long PROBE_CENTER_MS = 25;     // Small settle when returning to center (ms)
 const float TARGET_SIDE = 40.0f;
 const float SIDE_SOFT_CM = 45.0f;                  // Side “caution” distance: start steering away
-const float SIDE_HARD_CM = 28.0f;                  // Side “hard” distance: force turn away
+const float SIDE_HARD_CM = 32.0f;                  // Side “hard” distance: force turn away
 const unsigned long SIDE_AVOID_COOLDOWN_MS = 250;  // Cooldown after side-avoid turn before probing again
 
 const unsigned long STEER_HOLD_MS = 550;  // Hold steerBias effect for this long (ms)
@@ -42,11 +42,11 @@ const int STEER_DELTA_PWM = 22;           // Typical steer strength (PWM delta)
 const unsigned long NAV_UPDATE_MS = 25;  // Navigation decision tick interval (ms)
 const unsigned long DISPLAY_MS = 500;    // OLED refresh interval (ms)
 
-const unsigned long TURN_MS = 300;          // Normal turn duration (ms)
-const unsigned long TURN_SHORT_MS = 225;    // Shorter “nudge” turn duration (ms)
-const unsigned long BACKUP_MS = 150;        // Normal backup duration (ms)
+const unsigned long TURN_MS = 400;          // Normal turn duration (ms)
+const unsigned long TURN_SHORT_MS = 285;    // Shorter “nudge” turn duration (ms)
+const unsigned long BACKUP_MS = 200;        // Normal backup duration (ms)
 const unsigned long BRAKE_MS = 2;           // Brake delay before backing (ms)
-const unsigned long BRAKE_CAUTION_MS = 25;  // Brake delay for caution case (ms)
+const unsigned long BRAKE_CAUTION_MS = 15;  // Brake delay for caution case (ms)
 const unsigned long FORWARD_MIN_MS = 250;   // Minimum time to keep moving forward once chosen (ms)
 
 const float AVOID_DIST_CM = 28.0f;    // “Hard obstacle” threshold (front)
@@ -78,8 +78,8 @@ const int LEFT_MOTOR_TRIM = 0;         // Small correction for left PWM
 const int RIGHT_MOTOR_TRIM = 0;        // Small correction for right PWM
 
 const int MIN_PWM = 45;    // Minimum effective PWM (below this motors may not move)
-const int DRIVE_PWM = 55;  // Forward/back cruising PWM
-const int TURN_PWM = 90;   // Turning PWM (spin turns)
+const int DRIVE_PWM = 75;  // Forward/back cruising PWM
+const int TURN_PWM = 100;   // Turning PWM (spin turns)
 
 // =====================================================
 // ULTRASONIC CONFIG
@@ -237,6 +237,12 @@ static unsigned long highSinceMs = 0;
 void setLocomotionState(LocomotionState s, unsigned long durationMs) {
   locoState = s;
   stateUntilMs = millis() + durationMs;
+  if (s != FORWARD) {
+    invalidateProbes();
+    lastProbeMs = millis();
+    steerBias = 0;
+    steerUntilMs = 0;
+  }
 }
 
 void debug(const char *tag, const char *msg) {
@@ -266,7 +272,7 @@ void applyLocomotion() {
         int base = DRIVE_PWM;
         if (sensors.distCenter > 0) {
           if (sensors.distCenter < 55.0f) base = DRIVE_PWM - 10;
-          else if (sensors.distCenter > 120.0f) base = DRIVE_PWM + 10;
+          else if (sensors.distCenter > 120.0f) base = DRIVE_PWM + 5;
         }
         int lp = base + b;
         int rp = base - b;
@@ -487,6 +493,11 @@ void updateGasHuntState(unsigned long now) {
   }
 }
 
+static void invalidateProbes() {
+  probeL = -1.0f;
+  probeR = -1.0f;
+}
+
 void navigationUpdate() {
   unsigned long now = millis();
 
@@ -565,8 +576,8 @@ void navigationUpdate() {
         float pd = readUltrasonicCm();
         servoWriteAngleBlocking(SERVO_ANGLE_CENTER, PROBE_CENTER_MS);
 
-        if (ang > SERVO_ANGLE_CENTER) probeL = pd;
-        else probeR = pd;
+        if (ang > SERVO_ANGLE_CENTER) probeR = pd;
+        else probeL = pd;
 
         probePhase ^= 1;
 
@@ -700,11 +711,10 @@ void navigationUpdate() {
     if (backupDur > BACKUP_MS + 280)
       backupDur = BACKUP_MS + 280;
 
-    unsigned long turnDur = TURN_MS + (unsigned long)failStreak * 50;
-    if (turnDur > TURN_MS + 250)
-      turnDur = TURN_MS + 250;
-
+    unsigned long turnDur = TURN_MS + (unsigned long)failStreak * 90;
+    if (turnDur > TURN_MS + 450) turnDur = TURN_MS + 450;
     pendingTurnDurMs = turnDur;
+
     setLocomotionState(BACKWARD, backupDur);
     return;
   }
@@ -981,7 +991,9 @@ void calibrateGasSensors(unsigned long ms) {
     int mq7 = readAnalogStable(PIN_MQ7);
     int mq135 = readAnalogStable(PIN_MQ135);
 
-    s2 += mq2; s7 += mq7; s135 += mq135;
+    s2 += mq2;
+    s7 += mq7;
+    s135 += mq135;
     s2sq += (long)mq2 * mq2;
     s7sq += (long)mq7 * mq7;
     s135sq += (long)mq135 * mq135;
@@ -1031,9 +1043,12 @@ int readCalibratedGasStrength() {
   int mq7 = readAnalogStable(PIN_MQ7);
   int mq135 = readAnalogStable(PIN_MQ135);
 
-  int d2 = mq2 - base2; if (d2 < 0) d2 = 0;
-  int d7 = mq7 - base7; if (d7 < 0) d7 = 0;
-  int d135 = mq135 - base135; if (d135 < 0) d135 = 0;
+  int d2 = mq2 - base2;
+  if (d2 < 0) d2 = 0;
+  int d7 = mq7 - base7;
+  if (d7 < 0) d7 = 0;
+  int d135 = mq135 - base135;
+  if (d135 < 0) d135 = 0;
 
   int maxDelta = d2;
   if (d7 > maxDelta) maxDelta = d7;
@@ -1049,9 +1064,21 @@ int readCalibratedGasStrength() {
   }
 
   int a = md1, b = md2, c = md3;
-  if (a > b) { int t = a; a = b; b = t; }
-  if (b > c) { int t = b; b = c; c = t; }
-  if (a > b) { int t = a; a = b; b = t; }
+  if (a > b) {
+    int t = a;
+    a = b;
+    b = t;
+  }
+  if (b > c) {
+    int t = b;
+    b = c;
+    c = t;
+  }
+  if (a > b) {
+    int t = a;
+    a = b;
+    b = t;
+  }
   maxDelta = b;
 
   int onTh = gasDead + 10;
