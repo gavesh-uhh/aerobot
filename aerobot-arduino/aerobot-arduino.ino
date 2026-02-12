@@ -133,6 +133,7 @@ const unsigned long GAS_HUNT_MIN_MS = 1600;
 const unsigned long GAS_LOCK_STABLE_MS = 500;
 const unsigned long GAS_LOCK_HOLD_MS = 8000;
 const int GAS_SEEN_OFF_LEVEL = GAS_ANOMALY_LEVEL - 25;
+const unsigned long GAS_HUNT_STARTUP_BLOCK_MS = 12000;
 
 // =====================================================
 // RUNTIME VARIABLES (DO NOT CHANGE SET VALUES)
@@ -161,6 +162,7 @@ static bool gasActive = false;                 // Hysteresis on/off around deadb
 static float gasEma = 0;                       // Slow EMA for rise detection
 static float gasFast = 0;                      // Fast EMA for rise detection
 static bool gasFilterInit = false;             // Prevent boot spike in rise calc
+static unsigned long gasBootBlockUntilMs = 0;
 
 struct SensorSnapshot {
   float distCenter;
@@ -404,6 +406,8 @@ LocomotionState pickTurnFromScan(float left, float right) {
 }
 
 void updateGasHuntState(unsigned long now) {
+  if (now < gasBootBlockUntilMs) return;
+
   if (sensors.gasRaw >= GAS_ANOMALY_LEVEL) {
     if (highSinceMs == 0) highSinceMs = now;
   } else {
@@ -1544,6 +1548,7 @@ void setup() {
   stopAllMotors();
   servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
   calibrateGasSensors(GAS_CALIBRATION_MS);
+  gasBootBlockUntilMs = millis() + GAS_HUNT_STARTUP_BLOCK_MS;
 }
 
 void loop() {
