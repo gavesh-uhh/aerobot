@@ -8,13 +8,13 @@ U8G2_SH1107_SEEED_128X128_1_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 // PIN MAP
 // =====================================================
 
-const int PIN_FAN = 8;        // Fan Relay 
+const int PIN_FAN = 8;        // Fan Relay
 const int PIN_PIR = 2;        // PIR motion sensor digital input
 const int PIN_MQ2 = A0;       // MQ-2 analog gas sensor
 const int PIN_MQ7 = A1;       // MQ-7 analog gas sensor
 const int PIN_MQ135 = A2;     // MQ-135 analog gas sensor
 const int PIN_LDR = A3;       // LDR analog input
-const int PIN_SERVO = 11;     // Servo 
+const int PIN_SERVO = 11;     // Servo
 const int PIN_TRIG = 12;      // Ultrasonic trigger
 const int PIN_ECHO = 13;      // Ultrasonic echo
 const int PIN_LEFT_IN1 = 9;   // L298N left motor input 1 (PWM)
@@ -79,7 +79,7 @@ const int TURN_PWM = 90;   // Turning PWM (spin turns)
 // ULTRASONIC CONFIG
 // =====================================================
 
-const unsigned long ULTRASONIC_TIMEOUT_US = 16500;  // pulseIn timeout (us) ~ max ~280cm-ish
+const unsigned long ULTRASONIC_TIMEOUT_US = 12500;  // pulseIn timeout (us) ~ max ~280cm-ish
 const float CM_PER_MICROSECOND = 0.0343f / 2.0f;    // Speed of sound conversion to cm (round-trip /2)
 
 // =====================================================
@@ -146,14 +146,14 @@ static float gasFast = 0;                      // Fast EMA for rise detection
 static bool gasFilterInit = false;             // Prevent boot spike in rise calc
 
 struct SensorSnapshot {
-  float distCenter; 
-  int gasRaw;     
-  float gasRise;     
-  bool pir;         
-  int ldr;           
+  float distCenter;
+  int gasRaw;
+  float gasRise;
+  bool pir;
+  int ldr;
 };
 
-static SensorSnapshot sensors; 
+static SensorSnapshot sensors;
 static unsigned long lastTelemetryMs = 0;  // Last telemetry send time (ms)
 
 // =====================================================
@@ -238,8 +238,13 @@ void applyLocomotion() {
         if (b < -35)
           b = -35;
 
-        int lp = DRIVE_PWM + b;
-        int rp = DRIVE_PWM - b;
+        int base = DRIVE_PWM;
+        if (sensors.distCenter > 0) {
+          if (sensors.distCenter < 55.0f) base = DRIVE_PWM - 10;
+          else if (sensors.distCenter > 120.0f) base = DRIVE_PWM + 10;
+        }
+        int lp = base + b;
+        int rp = base - b;
         driveMotorsDifferential(lp, true, rp, true);
       }
       break;
@@ -436,13 +441,30 @@ void navigationUpdate() {
   lastNavUpdateMs = now;
 
   updateGasHuntState(now);
+  if (gasState == HUNT && sensors.gasRaw > gasPeak - 6) lastCommitMs = now;
 
   bool distValid = (sensors.distCenter > 0);
   float d = sensors.distCenter;
-  bool invalidBlocked = (!distValid && invalidDistCount >= INVALID_DIST_LIMIT);
+  bool invalidBlocked = (!distValid && invalidDistCount >= INVALID_DIST_LIMIT && locoState == FORWARD);
   bool hardObstacle = distValid ? (d <= AVOID_DIST_CM) : invalidBlocked;
   bool softObstacle = distValid ? (d <= CAUTION_DIST_CM) : invalidBlocked;
   bool clearEnough = distValid ? (d >= (CAUTION_DIST_CM + AVOID_DIST_HYST)) : !invalidBlocked;
+
+  // PATCH : 90deg and 45deg corners
+  bool cornerTrap =
+    (softObstacle && !hardObstacle) && (probeL > 0 && probeL < 32.0f) && (probeR > 0 && probeR < 32.0f);
+
+  if (cornerTrap && failStreak >= 2) {
+    pendingTurnValid = false;
+    stopAllMotors();
+    delay(BRAKE_CAUTION_MS);
+    pendingTurn = lastTurnLeft ? TURN_RIGHT : TURN_LEFT;
+    lastTurnLeft = !lastTurnLeft;
+    pendingTurnDurMs = TURN_MS + 220;
+    pendingTurnValid = true;
+    setLocomotionState(BACKWARD, BACKUP_MS + 220);
+    return;
+  }
 
   if (gasState == LOCK && !softObstacle) {
     pendingTurnValid = false;
@@ -469,7 +491,7 @@ void navigationUpdate() {
         int ang = SERVO_ANGLE_CENTER + (probePhase ? +PROBE_OFFSET_DEG : -PROBE_OFFSET_DEG);
 
         servoWriteAngleBlocking(ang, PROBE_SETTLE_MS);
-        float pd = readUltrasonicMedian();
+        float pd = readUltrasonicCm();
         servoWriteAngleBlocking(SERVO_ANGLE_CENTER, PROBE_CENTER_MS);
 
         if (ang > SERVO_ANGLE_CENTER) probeL = pd;
@@ -481,7 +503,7 @@ void navigationUpdate() {
 
         if (probeL > 0 && probeR > 0) {
           float diff = probeR - probeL;  // + => left closer => steer right
-          b = (int)(diff * 1.6f);        
+          b = (int)(diff * 1.6f);
           if (b > 35) b = 35;
           if (b < -35) b = -35;
         } else if (probeL > 0 && probeL < TARGET_SIDE) {
@@ -646,14 +668,14 @@ void navigationUpdate() {
   if (gasState == HUNT) {
     bool gasRising = (sensors.gasRise >= GAS_RISE_SEEK);
 
-    if (gasRising || (now - lastPeakMs) < 1000) {
+    if (gasRising || sensors.gasRaw > gasPeak - 8 || (now - lastPeakMs) < 1200) {
       setLocomotionState(FORWARD, FORWARD_MIN_MS);
     } else {
-      if (now - lastCommitMs > 1400) {
+      if (now - lastCommitMs > 1600) {
         lastTurnLeft = !lastTurnLeft;
         lastCommitMs = now;
       }
-      setLocomotionState(lastTurnLeft ? TURN_LEFT : TURN_RIGHT, TURN_MS);
+      setLocomotionState(lastTurnLeft ? TURN_LEFT : TURN_RIGHT, TURN_SHORT_MS);
     }
     return;
   }
@@ -1476,6 +1498,7 @@ void loop() {
   readTelemetryFrame();
   updateSensorSnapshot();
   navigationUpdate();
+  updateFanLogic();
   applyLocomotion();
   soundTick();
   if ((now - lastDisplayMs >= DISPLAY_MS)) {
