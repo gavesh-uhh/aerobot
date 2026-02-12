@@ -27,13 +27,13 @@ const int PIN_BUZZER = 7;     // Buzzer
 // ROBOT NAVIGATION / AVOIDANCE TUNING
 // =====================================================
 
-const int PROBE_OFFSET_DEG = 35;              // Servo offset for side probing (± from center)
-const unsigned long PROBE_INTERVAL_MS = 145;  // Time between probe attempts while moving forward
+const int PROBE_OFFSET_DEG = 45;              // Servo offset for side probing (± from center)
+const unsigned long PROBE_INTERVAL_MS = 100;  // Time between probe attempts while moving forward
 const unsigned long PROBE_SETTLE_MS = 40;     // Extra settle time at probe angle (ms)
 const unsigned long PROBE_CENTER_MS = 25;     // Small settle when returning to center (ms)
-const float TARGET_SIDE = 30.0f;
-const float SIDE_SOFT_CM = 35.0f;                  // Side “caution” distance: start steering away
-const float SIDE_HARD_CM = 25.0f;                  // Side “hard” distance: force turn away
+const float TARGET_SIDE = 40.0f;
+const float SIDE_SOFT_CM = 45.0f;                  // Side “caution” distance: start steering away
+const float SIDE_HARD_CM = 28.0f;                  // Side “hard” distance: force turn away
 const unsigned long SIDE_AVOID_COOLDOWN_MS = 250;  // Cooldown after side-avoid turn before probing again
 
 const unsigned long STEER_HOLD_MS = 550;  // Hold steerBias effect for this long (ms)
@@ -63,6 +63,12 @@ const unsigned long STUCK_BACKUP_MS = 150;    // Backup duration when stuck reco
 const unsigned long STUCK_COOLDOWN_MS = 800;  // Cooldown after stuck recovery (ms)
 
 // =====================================================
+// LDR
+//
+const int LDR_DARK_TH = 650;
+const int LDR_BRIGHT_TH = 450;
+
+// =====================================================
 // MOTOR / DRIVE CONFIG
 // =====================================================
 
@@ -72,15 +78,15 @@ const int LEFT_MOTOR_TRIM = 0;         // Small correction for left PWM
 const int RIGHT_MOTOR_TRIM = 0;        // Small correction for right PWM
 
 const int MIN_PWM = 45;    // Minimum effective PWM (below this motors may not move)
-const int DRIVE_PWM = 65;  // Forward/back cruising PWM
+const int DRIVE_PWM = 55;  // Forward/back cruising PWM
 const int TURN_PWM = 90;   // Turning PWM (spin turns)
 
 // =====================================================
 // ULTRASONIC CONFIG
 // =====================================================
 
-const unsigned long ULTRASONIC_TIMEOUT_US = 12500;  // pulseIn timeout (us) ~ max ~280cm-ish
-const float CM_PER_MICROSECOND = 0.0343f / 2.0f;    // Speed of sound conversion to cm (round-trip /2)
+const unsigned long ULTRASONIC_TIMEOUT_US = 9500;  // pulseIn timeout (us) ~ max ~280cm-ish
+const float CM_PER_MICROSECOND = 0.0343f / 2.0f;   // Speed of sound conversion to cm (round-trip /2)
 
 // =====================================================
 // TIMING / TELEMETRY
@@ -116,14 +122,25 @@ const unsigned long FIRE_STALE_MS = 2500;  // If no new fire frame in this time,
 
 const unsigned long GAS_CALIBRATION_MS = 6000;  // Calibration duration at startup (ms)
 
-const float GAS_RISE_SEEK = 12.0f;       // “Rising fast” threshold to enter/keep hunt
-const int GAS_ANOMALY_LEVEL = 120;       // Absolute gas level considered “anomaly”
-const int GAS_LOCK_MARGIN = 6;           // Within peak-margin + low rise => lock condition
-const unsigned long GAS_LOST_MS = 2250;  // If gas not seen for this long, drop to PASSIVE
+const float GAS_RISE_SEEK = 12.0f;        // “Rising fast” threshold to enter/keep hunt
+const int GAS_ANOMALY_LEVEL = 120;        // Absolute gas level considered “anomaly”
+const int GAS_LOCK_MARGIN = 8;            // Within peak-margin + low rise => lock condition
+const unsigned long GAS_LOST_MS = 2250;   // If gas not seen for this long, drop to PASSIVE
+const float GAS_LOCK_LIKELYHOOOD = 4.0f;  // Max threshold for locking into LOCK mode
+const int GAS_LOCK_MIN_LEVEL = 155;
+const int GAS_LOCK_MIN_PEAK = 165;
+const unsigned long GAS_HUNT_MIN_MS = 1600;
+const unsigned long GAS_LOCK_STABLE_MS = 500;
+const unsigned long GAS_LOCK_HOLD_MS = 8000;
+const int GAS_SEEN_OFF_LEVEL = GAS_ANOMALY_LEVEL - 25;
 
 // =====================================================
 // RUNTIME VARIABLES (DO NOT CHANGE SET VALUES)
 // =====================================================
+
+// ---- Hunting ----
+static bool huntPendingForward = false;
+static unsigned long huntNextSweepMs = 0;
 
 // ---- Fire runtime ----
 static float fireConfidence = -1.0f;       // Latest fire confidence [0..1], -1 unknown
@@ -210,6 +227,10 @@ static unsigned long gasStateSinceMs = 0;
 static unsigned long lastGasSeenMs = 0;
 static unsigned long lastPeakMs = 0;
 static int gasPeak = 0;
+static bool gasPresent = false;
+static unsigned long lockStableSinceMs = 0;
+static unsigned long lockHoldUntilMs = 0;
+static unsigned long highSinceMs = 0;
 
 void setLocomotionState(LocomotionState s, unsigned long durationMs) {
   locoState = s;
@@ -222,6 +243,8 @@ void debug(const char *tag, const char *msg) {
   Serial.print(',');
   Serial.println(msg);
 }
+
+
 
 void applyLocomotion() {
   switch (locoState) {
@@ -381,42 +404,80 @@ LocomotionState pickTurnFromScan(float left, float right) {
 }
 
 void updateGasHuntState(unsigned long now) {
-  bool gasRising = (sensors.gasRise >= GAS_RISE_SEEK);
-  bool gasAnomaly = (sensors.gasRaw >= GAS_ANOMALY_LEVEL) && (sensors.gasRise >= GAS_RISE_SEEK);
+  if (sensors.gasRaw >= GAS_ANOMALY_LEVEL) {
+    if (highSinceMs == 0) highSinceMs = now;
+  } else {
+    highSinceMs = 0;
+  }
 
-  if (gasAnomaly)
-    lastGasSeenMs = now;
+  if (gasPresent) gasPresent = (sensors.gasRaw >= GAS_SEEN_OFF_LEVEL);
+  else gasPresent = (sensors.gasRaw >= GAS_ANOMALY_LEVEL);
+
+  if (gasPresent) lastGasSeenMs = now;
+
+  const bool gasRisingFast = (sensors.gasRise >= GAS_RISE_SEEK);
 
   if (sensors.gasRaw > gasPeak + 2) {
     gasPeak = sensors.gasRaw;
     lastPeakMs = now;
   }
 
+  const bool stableRise =
+    (sensors.gasRise > -GAS_LOCK_LIKELYHOOOD) && (sensors.gasRise < GAS_LOCK_LIKELYHOOOD);
+
+  const bool nearPeak = (gasPeak > 0) && (sensors.gasRaw >= (gasPeak - GAS_LOCK_MARGIN));
+  const bool peakGood = (gasPeak >= GAS_LOCK_MIN_PEAK);
+  const bool levelGood = (sensors.gasRaw >= GAS_LOCK_MIN_LEVEL);
+
+  if (stableRise && nearPeak && peakGood && levelGood && (now - lastPeakMs) >= 300) {
+    if (lockStableSinceMs == 0) lockStableSinceMs = now;
+  } else {
+    lockStableSinceMs = 0;
+  }
+
   switch (gasState) {
     case PASSIVE:
-      if (gasAnomaly) {
-        gasState = HUNT;
-        gasStateSinceMs = now;
+      {
+        bool enterOnSpike =
+          (sensors.gasRaw >= (GAS_ANOMALY_LEVEL + 15)) && (sensors.gasRise >= GAS_RISE_SEEK);
+
+        bool enterOnSustain =
+          (highSinceMs != 0) && ((now - highSinceMs) >= 1200) && (sensors.gasRaw >= (GAS_ANOMALY_LEVEL + 25));
+
+        if (enterOnSpike || enterOnSustain) {
+          gasState = HUNT;
+          gasStateSinceMs = now;
+          lastGasSeenMs = now;
+          gasPeak = sensors.gasRaw;
+          lastPeakMs = now;
+          lockStableSinceMs = 0;
+        }
       }
       break;
+
     case HUNT:
       if (now - lastGasSeenMs > GAS_LOST_MS) {
         gasState = PASSIVE;
         gasStateSinceMs = now;
         gasPeak = 0;
-      } else if ((now - gasStateSinceMs) > 1000 && sensors.gasRaw >= (gasPeak - GAS_LOCK_MARGIN) && sensors.gasRise < 2.0f) {
+        lockStableSinceMs = 0;
+      } else if ((now - gasStateSinceMs) >= GAS_HUNT_MIN_MS && lockStableSinceMs != 0 && (now - lockStableSinceMs) >= GAS_LOCK_STABLE_MS) {
         gasState = LOCK;
         gasStateSinceMs = now;
+        lockHoldUntilMs = now + GAS_LOCK_HOLD_MS;
       }
       break;
+
     case LOCK:
-      if (now - lastGasSeenMs > GAS_LOST_MS) {
+      if (gasRisingFast && sensors.gasRaw > gasPeak + GAS_LOCK_MARGIN) {
+        gasState = HUNT;
+        gasStateSinceMs = now;
+        lockStableSinceMs = 0;
+      } else if (now >= lockHoldUntilMs && (now - lastGasSeenMs > GAS_LOST_MS)) {
         gasState = PASSIVE;
         gasStateSinceMs = now;
         gasPeak = 0;
-      } else if (gasRising && sensors.gasRaw > gasPeak + GAS_LOCK_MARGIN) {
-        gasState = HUNT;
-        gasStateSinceMs = now;
+        lockStableSinceMs = 0;
       }
       break;
   }
@@ -449,6 +510,7 @@ void navigationUpdate() {
   bool hardObstacle = distValid ? (d <= AVOID_DIST_CM) : invalidBlocked;
   bool softObstacle = distValid ? (d <= CAUTION_DIST_CM) : invalidBlocked;
   bool clearEnough = distValid ? (d >= (CAUTION_DIST_CM + AVOID_DIST_HYST)) : !invalidBlocked;
+  static bool lockCentered = false;
 
   // PATCH : 90deg and 45deg corners
   bool cornerTrap =
@@ -466,11 +528,16 @@ void navigationUpdate() {
     return;
   }
 
-  if (gasState == LOCK && !softObstacle) {
+  if (gasState == LOCK) {
     pendingTurnValid = false;
-    servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
-    setLocomotionState(STOPPED, 500);
+    if (!lockCentered) {
+      servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
+      lockCentered = true;
+    }
+    setLocomotionState(STOPPED, 150);
     return;
+  } else {
+    lockCentered = false;
   }
 
   if (now < stateUntilMs) {
@@ -667,17 +734,37 @@ void navigationUpdate() {
 
   if (gasState == HUNT) {
     bool gasRising = (sensors.gasRise >= GAS_RISE_SEEK);
+    bool nearPeak = (sensors.gasRaw > gasPeak - 8);
+    bool peakRecent = ((now - lastPeakMs) < 1200);
 
-    if (gasRising || sensors.gasRaw > gasPeak - 8 || (now - lastPeakMs) < 1200) {
-      setLocomotionState(FORWARD, FORWARD_MIN_MS);
-    } else {
-      if (now - lastCommitMs > 1600) {
-        lastTurnLeft = !lastTurnLeft;
-        lastCommitMs = now;
-      }
-      setLocomotionState(lastTurnLeft ? TURN_LEFT : TURN_RIGHT, TURN_SHORT_MS);
+    if (huntPendingForward) {
+      huntPendingForward = false;
+      steerBias = lastTurnLeft ? -24 : +24;
+      steerUntilMs = now + 900;
+      setLocomotionState(FORWARD, 650);
+      return;
     }
-    return;
+
+    if (gasRising || nearPeak || peakRecent) {
+      steerBias = 0;
+      huntNextSweepMs = now + 900;
+      setLocomotionState(FORWARD, 450);
+      return;
+    }
+
+    if (now >= huntNextSweepMs) {
+      lastTurnLeft = !lastTurnLeft;
+      huntNextSweepMs = now + 1300;
+
+      huntPendingForward = true;
+      setLocomotionState(lastTurnLeft ? TURN_LEFT : TURN_RIGHT, 170);
+      return;
+    } else {
+      steerBias = lastTurnLeft ? -28 : +28;
+      steerUntilMs = now + 800;
+      setLocomotionState(FORWARD, 500);
+      return;
+    }
   }
 
   if (now - lastWanderTurnMs > 7500) {
@@ -737,13 +824,6 @@ int clampPwm(int pwm) {
   return pwm;
 }
 
-void stopAllMotors() {
-  digitalWrite(PIN_LEFT_IN1, LOW);
-  digitalWrite(PIN_LEFT_IN2, LOW);
-  digitalWrite(PIN_RIGHT_IN1, LOW);
-  digitalWrite(PIN_RIGHT_IN2, LOW);
-}
-
 void driveMotorPair(int in1, int in2, int pwm, bool forward, bool invert,
                     int &lastSign) {
   pwm = clampPwm(pwm);
@@ -770,6 +850,13 @@ void driveMotorPair(int in1, int in2, int pwm, bool forward, bool invert,
     digitalWrite(in1, LOW);
     analogWrite(in2, pwm);
   }
+}
+
+void stopAllMotors() {
+  digitalWrite(PIN_LEFT_IN1, LOW);
+  digitalWrite(PIN_LEFT_IN2, LOW);
+  digitalWrite(PIN_RIGHT_IN1, LOW);
+  digitalWrite(PIN_RIGHT_IN2, LOW);
 }
 
 void driveMotorsDifferential(int leftPwm, bool leftFwd, int rightPwm,
@@ -841,46 +928,23 @@ float readUltrasonicMedian() {
 }
 
 int readAnalogStable(int pin) {
-  int a = analogRead(pin);
-  int b = analogRead(pin);
-  int c = analogRead(pin);
-  int d = analogRead(pin);
-  int e = analogRead(pin);
+  int v[5];
+  v[0] = analogRead(pin);
+  v[1] = analogRead(pin);
+  v[2] = analogRead(pin);
+  v[3] = analogRead(pin);
+  v[4] = analogRead(pin);
 
-  int x1 = a, x2 = b, x3 = c, x4 = d, x5 = e;
-
-  if (x1 > x2) {
-    int t = x1;
-    x1 = x2;
-    x2 = t;
+  for (int i = 0; i < 4; i++) {
+    for (int j = i + 1; j < 5; j++) {
+      if (v[j] < v[i]) {
+        int t = v[i];
+        v[i] = v[j];
+        v[j] = t;
+      }
+    }
   }
-  if (x4 > x5) {
-    int t = x4;
-    x4 = x5;
-    x5 = t;
-  }
-  if (x1 > x3) {
-    int t = x1;
-    x1 = x3;
-    x3 = t;
-  }
-  if (x2 > x3) {
-    int t = x2;
-    x2 = x3;
-    x3 = t;
-  }
-  if (x4 > x3) {
-    int t = x4;
-    x4 = x3;
-    x3 = t;
-  }
-  if (x5 > x3) {
-    int t = x5;
-    x5 = x3;
-    x3 = t;
-  }
-
-  return x3;
+  return v[2];
 }
 
 int integerSqrt(long x) {
@@ -913,9 +977,7 @@ void calibrateGasSensors(unsigned long ms) {
     int mq7 = readAnalogStable(PIN_MQ7);
     int mq135 = readAnalogStable(PIN_MQ135);
 
-    s2 += mq2;
-    s7 += mq7;
-    s135 += mq135;
+    s2 += mq2; s7 += mq7; s135 += mq135;
     s2sq += (long)mq2 * mq2;
     s7sq += (long)mq7 * mq7;
     s135sq += (long)mq135 * mq135;
@@ -924,8 +986,7 @@ void calibrateGasSensors(unsigned long ms) {
     delay(30);
   }
 
-  if (n < 5)
-    n = 5;
+  if (n < 5) n = 5;
 
   base2 = (int)(s2 / n);
   base7 = (int)(s7 / n);
@@ -935,28 +996,21 @@ void calibrateGasSensors(unsigned long ms) {
   long v2 = (s2sq / n) - (m2 * m2);
   long v7 = (s7sq / n) - (m7 * m7);
   long v135 = (s135sq / n) - (m135 * m135);
-  if (v2 < 0)
-    v2 = 0;
-  if (v7 < 0)
-    v7 = 0;
-  if (v135 < 0)
-    v135 = 0;
+  if (v2 < 0) v2 = 0;
+  if (v7 < 0) v7 = 0;
+  if (v135 < 0) v135 = 0;
 
   int sd2 = integerSqrt(v2);
   int sd7 = integerSqrt(v7);
   int sd135 = integerSqrt(v135);
 
   int sdMax = sd2;
-  if (sd7 > sdMax)
-    sdMax = sd7;
-  if (sd135 > sdMax)
-    sdMax = sd135;
+  if (sd7 > sdMax) sdMax = sd7;
+  if (sd135 > sdMax) sdMax = sd135;
 
-  gasDead = sdMax * 3;
-  if (gasDead < 12)
-    gasDead = 12;
-  if (gasDead > 80)
-    gasDead = 80;
+  gasDead = sdMax;
+  if (gasDead < 6) gasDead = 6;
+  if (gasDead > 25) gasDead = 25;
 
   gasOut = 0;
   gasActive = false;
@@ -973,21 +1027,13 @@ int readCalibratedGasStrength() {
   int mq7 = readAnalogStable(PIN_MQ7);
   int mq135 = readAnalogStable(PIN_MQ135);
 
-  int d2 = mq2 - base2;
-  if (d2 < 0)
-    d2 = 0;
-  int d7 = mq7 - base7;
-  if (d7 < 0)
-    d7 = 0;
-  int d135 = mq135 - base135;
-  if (d135 < 0)
-    d135 = 0;
+  int d2 = mq2 - base2; if (d2 < 0) d2 = 0;
+  int d7 = mq7 - base7; if (d7 < 0) d7 = 0;
+  int d135 = mq135 - base135; if (d135 < 0) d135 = 0;
 
   int maxDelta = d2;
-  if (d7 > maxDelta)
-    maxDelta = d7;
-  if (d135 > maxDelta)
-    maxDelta = d135;
+  if (d7 > maxDelta) maxDelta = d7;
+  if (d135 > maxDelta) maxDelta = d135;
 
   if (!mdInit) {
     md1 = md2 = md3 = maxDelta;
@@ -999,57 +1045,34 @@ int readCalibratedGasStrength() {
   }
 
   int a = md1, b = md2, c = md3;
-  if (a > b) {
-    int t = a;
-    a = b;
-    b = t;
-  }
-  if (b > c) {
-    int t = b;
-    b = c;
-    c = t;
-  }
-  if (a > b) {
-    int t = a;
-    a = b;
-    b = t;
-  }
+  if (a > b) { int t = a; a = b; b = t; }
+  if (b > c) { int t = b; b = c; c = t; }
+  if (a > b) { int t = a; a = b; b = t; }
   maxDelta = b;
 
-  int onTh = gasDead + 30;
-  int offTh = gasDead + 14;
+  int onTh = gasDead + 10;
+  int offTh = gasDead + 4;
 
   if (!gasActive) {
-    if (maxDelta >= onTh)
-      gasActive = true;
+    if (maxDelta >= onTh) gasActive = true;
   } else {
-    if (maxDelta <= offTh)
-      gasActive = false;
+    if (maxDelta <= offTh) gasActive = false;
   }
 
   int target = 0;
   if (gasActive) {
     target = maxDelta - offTh;
-    if (target < 0)
-      target = 0;
+    if (target < 0) target = 0;
   }
 
-  int maxJump = gasDead * 3;
-  if (maxJump < 35)
-    maxJump = 35;
-  if (maxJump > 160)
-    maxJump = 160;
-
+  int maxJump = 60;
   int diff = target - gasOut;
-  if (diff > maxJump)
-    target = gasOut + maxJump;
-  if (diff < -maxJump)
-    target = gasOut - maxJump;
+  if (diff > maxJump) target = gasOut + maxJump;
+  if (diff < -maxJump) target = gasOut - maxJump;
 
   if (!gasActive && gasOut > 0) {
     gasOut = (gasOut * 9) / 10;
-    if (gasOut < 2)
-      gasOut = 0;
+    if (gasOut < 2) gasOut = 0;
     return gasOut;
   }
 
@@ -1205,32 +1228,18 @@ void displayTick(U8G2 &display) {
 
     const char *locoLabel = "STOP";
     switch (locoState) {
-      case FORWARD:
-        locoLabel = "FWD";
-        break;
-      case BACKWARD:
-        locoLabel = "BACK";
-        break;
-      case TURN_LEFT:
-        locoLabel = "LEFT";
-        break;
-      case TURN_RIGHT:
-        locoLabel = "RIGHT";
-        break;
-      default:
-        break;
+      case FORWARD: locoLabel = "FWD"; break;
+      case BACKWARD: locoLabel = "BACK"; break;
+      case TURN_LEFT: locoLabel = "LEFT"; break;
+      case TURN_RIGHT: locoLabel = "RIGHT"; break;
+      default: break;
     }
 
     const char *gasLabel = "PASS";
     switch (gasState) {
-      case HUNT:
-        gasLabel = "HUNT";
-        break;
-      case LOCK:
-        gasLabel = "LOCK";
-        break;
-      default:
-        break;
+      case HUNT: gasLabel = "HUNT"; break;
+      case LOCK: gasLabel = "LOCK"; break;
+      default: break;
     }
 
     bool distValid = (sensors.distCenter > 0);
@@ -1241,17 +1250,13 @@ void displayTick(U8G2 &display) {
     firePct = clampi(firePct, 0, 100);
 
     const char *status = "OK";
-    if (fireValid && fireActive)
-      status = "FIRE";
-    else if (gasState == LOCK)
-      status = "LOCK";
-    else if (distValid && dcm <= AVOID_DIST_CM)
-      status = "AVOID";
-    else if (gasState == HUNT)
-      status = "HUNT";
+    if (fireValid && fireActive) status = "FIRE";
+    else if (gasState == LOCK) status = "LOCK";
+    else if (distValid && dcm <= AVOID_DIST_CM) status = "AVOID";
+    else if (gasState == HUNT) status = "HUNT";
 
     display.setCursor(0, 8);
-    display.print("AEROBOT ");
+    display.print("AeroBot ");
     display.print(status);
 
     drawPill(display, 0, 12, locoLabel);
@@ -1281,24 +1286,30 @@ void displayTick(U8G2 &display) {
 
     display.drawFrame(0, 36, 128, 10);
     int fillPx = mapClamp(distFill, 0, 100, 0, 128);
-    if (fillPx > 0)
-      display.drawBox(0, 36, fillPx, 10);
+    if (fillPx > 0) display.drawBox(0, 36, fillPx, 10);
 
-    int gasFill = mapClamp(sensors.gasRaw, 0, 250, 0, 100);
+    static int gasDisp = 0;
+    static int gasMax = 350;
+
+    gasDisp = (gasDisp * 9 + sensors.gasRaw) / 10;
+
+    int targetMax = gasDisp + 120;
+    if (targetMax < 350) targetMax = 350;
+    gasMax = (gasMax * 31 + targetMax) / 32;
+
+    int gasFill = mapClamp(gasDisp, 0, gasMax, 0, 100);
+
     display.setCursor(0, 58);
     display.print("GAS ");
-    display.print(sensors.gasRaw);
+    display.print(gasDisp);
 
     display.drawFrame(0, 60, 128, 8);
     int gasPx = mapClamp(gasFill, 0, 100, 0, 128);
-    if (gasPx > 0)
-      display.drawBox(0, 60, gasPx, 8);
+    if (gasPx > 0) display.drawBox(0, 60, gasPx, 8);
 
     float r = sensors.gasRise;
-    if (r > 20)
-      r = 20;
-    if (r < -20)
-      r = -20;
+    if (r > 20) r = 20;
+    if (r < -20) r = -20;
     int cx = 64;
     int needle = cx + (int)((r / 20.0f) * 60.0f);
 
@@ -1313,7 +1324,7 @@ void displayTick(U8G2 &display) {
     display.setCursor(0, 98);
     display.print("FIRE ");
     if (!fireValid) {
-      display.print("stale");
+      display.print("N/A");
     } else {
       display.print(fireActive ? "ON " : "off ");
       display.print(firePct);
@@ -1322,8 +1333,7 @@ void displayTick(U8G2 &display) {
 
     display.drawFrame(0, 100, 128, 8);
     int firePx = mapClamp(firePct, 0, 100, 0, 128);
-    if (fireValid && firePx > 0)
-      display.drawBox(0, 100, firePx, 8);
+    if (fireValid && firePx > 0) display.drawBox(0, 100, firePx, 8);
 
     display.setCursor(0, 122);
     display.print("LDR ");
@@ -1332,24 +1342,38 @@ void displayTick(U8G2 &display) {
   } while (display.nextPage());
 }
 
+
+static uint8_t ldrLoudLevel() {
+  static bool dark = false;
+  int l = sensors.ldr;
+
+  if (!dark && l >= LDR_DARK_TH) dark = true;
+  else if (dark && l <= LDR_BRIGHT_TH) dark = false;
+
+  return dark ? 2 : 1;
+}
+
 void soundTick() {
   unsigned long now = millis();
   static GasHuntState prevGas = PASSIVE;
   static bool prevFire = false;
+
   static unsigned long oneShotUntilMs = 0;
   static unsigned long oneShotNextMs = 0;
   static uint8_t oneShotStep = 0;
   static uint8_t oneShotType = 0;
+
   static unsigned long huntNextMs = 0;
+
+  uint8_t loud = ldrLoudLevel();
+  bool dark = (loud == 2);
 
   bool fireValid = (now - lastFireReceive) <= FIRE_STALE_MS;
   if (!fireValid) {
     fireActive = false;
   } else {
-    if (!fireActive && fireConfidence >= FIRE_ON_TH)
-      fireActive = true;
-    if (fireActive && fireConfidence <= FIRE_OFF_TH)
-      fireActive = false;
+    if (!fireActive && fireConfidence >= FIRE_ON_TH) fireActive = true;
+    if (fireActive && fireConfidence <= FIRE_OFF_TH) fireActive = false;
   }
 
   if (gasState != prevGas) {
@@ -1357,7 +1381,7 @@ void soundTick() {
       oneShotType = 1;
       oneShotStep = 0;
       oneShotNextMs = 0;
-      oneShotUntilMs = now + 600;
+      oneShotUntilMs = now + (dark ? 800 : 600);
     }
     prevGas = gasState;
   }
@@ -1367,12 +1391,12 @@ void soundTick() {
       oneShotType = 2;
       oneShotStep = 0;
       oneShotNextMs = 0;
-      oneShotUntilMs = now + 700;
+      oneShotUntilMs = now + (dark ? 900 : 700);
     } else {
       oneShotType = 3;
       oneShotStep = 0;
       oneShotNextMs = 0;
-      oneShotUntilMs = now + 450;
+      oneShotUntilMs = now + (dark ? 550 : 450);
     }
     prevFire = fireActive;
   }
@@ -1380,32 +1404,47 @@ void soundTick() {
   if (now < oneShotUntilMs) {
     if (oneShotNextMs == 0 || now >= oneShotNextMs) {
       if (oneShotType == 1) {
+        int f = dark ? 920 : 700;
+        int dur = dark ? 170 : 120;
+        int gapA = dark ? 140 : 180;
+        int gapB = dark ? 220 : 260;
+
         if (oneShotStep == 0) {
-          tone(PIN_BUZZER, 700, 120);
-          oneShotNextMs = now + 180;
+          tone(PIN_BUZZER, f, dur);
+          oneShotNextMs = now + gapA;
           oneShotStep = 1;
         } else {
-          tone(PIN_BUZZER, 700, 120);
-          oneShotNextMs = now + 260;
+          tone(PIN_BUZZER, f, dur);
+          oneShotNextMs = now + gapB;
           oneShotStep = 0;
         }
       } else if (oneShotType == 2) {
+        int f = dark ? 1400 : 1050;
+        int durS = dark ? 110 : 90;
+        int durL = dark ? 150 : 120;
+        int gap = dark ? 120 : 140;
+        int gapEnd = dark ? 210 : 250;
+
         if (oneShotStep == 0) {
-          tone(PIN_BUZZER, 1050, 90);
-          oneShotNextMs = now + 140;
+          tone(PIN_BUZZER, f, durS);
+          oneShotNextMs = now + gap;
           oneShotStep = 1;
         } else if (oneShotStep == 1) {
-          tone(PIN_BUZZER, 1050, 90);
-          oneShotNextMs = now + 140;
+          tone(PIN_BUZZER, f, durS);
+          oneShotNextMs = now + gap;
           oneShotStep = 2;
         } else {
-          tone(PIN_BUZZER, 1050, 120);
-          oneShotNextMs = now + 250;
+          tone(PIN_BUZZER, f, durL);
+          oneShotNextMs = now + gapEnd;
           oneShotStep = 0;
         }
       } else {
-        tone(PIN_BUZZER, 520, 320);
-        oneShotNextMs = now + 360;
+        int f = dark ? 650 : 520;
+        int dur = dark ? 420 : 320;
+        int gap = dark ? 450 : 360;
+
+        tone(PIN_BUZZER, f, dur);
+        oneShotNextMs = now + gap;
         oneShotStep = 0;
       }
     }
@@ -1417,15 +1456,20 @@ void soundTick() {
     static bool fireOn = false;
     static bool fireHi = false;
 
+    int fHi = dark ? 1600 : 1200;
+    int fLo = dark ? 1150 : 900;
+    unsigned long onMs = dark ? 120 : 100;
+    unsigned long offMs = dark ? 60 : 80;
+
     if (now >= fireNextMs) {
       fireOn = !fireOn;
       if (fireOn) {
         fireHi = !fireHi;
-        tone(PIN_BUZZER, fireHi ? 1200 : 900);
-        fireNextMs = now + 100;
+        tone(PIN_BUZZER, fireHi ? fHi : fLo);
+        fireNextMs = now + onMs;
       } else {
         noTone(PIN_BUZZER);
-        fireNextMs = now + 80;
+        fireNextMs = now + offMs;
       }
     }
     return;
@@ -1435,14 +1479,19 @@ void soundTick() {
     static unsigned long lockNextMs = 0;
     static uint8_t lockStep = 0;
 
+    int f = dark ? 980 : 780;
+    int dur = dark ? 210 : 160;
+    unsigned long gapA = dark ? 260 : 220;
+    unsigned long gapB = dark ? 420 : 520;
+
     if (now >= lockNextMs) {
       if (lockStep == 0) {
-        tone(PIN_BUZZER, 780, 160);
-        lockNextMs = now + 220;
+        tone(PIN_BUZZER, f, dur);
+        lockNextMs = now + gapA;
         lockStep = 1;
-      } else if (lockStep == 1) {
-        tone(PIN_BUZZER, 780, 160);
-        lockNextMs = now + 520;
+      } else {
+        tone(PIN_BUZZER, f, dur);
+        lockNextMs = now + gapB;
         lockStep = 0;
       }
     }
@@ -1450,9 +1499,13 @@ void soundTick() {
   }
 
   if (gasState == HUNT) {
+    int f = dark ? 860 : 650;
+    int dur = dark ? 65 : 35;
+    unsigned long period = dark ? 750 : 1200;
+
     if (now >= huntNextMs) {
-      tone(PIN_BUZZER, 650, 35);
-      huntNextMs = now + 1200;
+      tone(PIN_BUZZER, f, dur);
+      huntNextMs = now + period;
     }
     return;
   }
