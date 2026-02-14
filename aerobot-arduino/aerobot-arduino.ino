@@ -112,11 +112,12 @@ const int SERVO_PERIOD_US = 20000;          // Servo frame period (us)
 // FIRE (FROM ESP32) CONFIG
 // =====================================================
 
-const float FIRE_ON_TH = 0.85f;            // Fire turns ON above this confidence
-const float FIRE_OFF_TH = 0.75f;           // Fire turns OFF below this confidence
+const float FIRE_ON_TH = 0.95f;            // Fire turns ON above this confidence
+const float FIRE_OFF_TH = 0.85f;           // Fire turns OFF below this confidence
 const unsigned long FIRE_STALE_MS = 1500;  // If no new fire frame in this time, treat as stale
 const float FIRE_FILTER_ALPHA = 0.25f;
 const unsigned long FIRE_ON_HOLD_MS = 900;
+
 const unsigned long FIRE_OFF_HOLD_MS = 1400;
 
 // =====================================================
