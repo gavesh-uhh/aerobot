@@ -26,8 +26,8 @@ static uint32_t redOffAt = 0;
 
 static bool flashOn = false;
 static bool sentForThisFire = false;
-static const int LDR_FLASH_ON = 800;
-static const int LDR_FLASH_OFF = 750;
+static const int LDR_FLASH_ON = 850;
+static const int LDR_FLASH_OFF = 780;
 
 /* ================= WIFI ================= */
 const char *WIFI_SSID = "Gavesh";
@@ -36,6 +36,11 @@ const char *AP_SSID = "ESP32-RX";
 const char *AP_PASS = "esp32rx1";
 
 static WebServer server(80);
+IPAddress local_IP(172, 20, 10, 2);
+IPAddress gateway(172, 20, 10, 1); 
+IPAddress subnet(255, 255, 255, 0);
+IPAddress primaryDNS(8, 8, 8, 8); 
+
 
 /* ================= SERVER ================= */
 const bool ENABLE_SERVER_PUSH = true;
@@ -80,10 +85,9 @@ static bool doParse = true;
 /* ================= FIRE ================= */
 static float lastFirePercent = 0.0f;
 static uint32_t lastFireMs = 0;
-static const uint32_t FIRE_CHECK_INTERVAL_MS = 900;
+static const uint32_t FIRE_CHECK_INTERVAL_MS = 500;
 static uint32_t lastFeedMs = 0;
 static uint32_t lastSentParseMs = 0;
-
 static float prevFireConf = 0.0f;
 static float fireFlickEma = 0.0f;
 static bool fireStateHys = false;
@@ -647,9 +651,9 @@ void loop() {
     lastFireMs = now;
 
     Link.print("FIRE32,confidence=");
-    Link.println(lastFirePercent, 1);
+    Link.println(lastFirePercent / 100.0f, 3);
 
-    if (fireStateHys && !sentForThisFire && live.locoState == 0) {
+    if (fireStateHys && !sentForThisFire) {
       bool ok = uploadFireFrame(conf);
       Serial.print("uploadFireFrame: ");
       Serial.println(ok ? "OK" : "FAIL");

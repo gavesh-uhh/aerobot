@@ -49,11 +49,11 @@ const unsigned long BRAKE_MS = 2;           // Brake delay before backing (ms)
 const unsigned long BRAKE_CAUTION_MS = 15;  // Brake delay for caution case (ms)
 const unsigned long FORWARD_MIN_MS = 250;   // Minimum time to keep moving forward once chosen (ms)
 
-const float AVOID_DIST_CM = 28.0f;    // “Hard obstacle” threshold (front)
-const float CAUTION_DIST_CM = 38.0f;  // “Soft obstacle” threshold (front)
+const float AVOID_DIST_CM = 32.5f;    // “Hard obstacle” threshold (front)
+const float CAUTION_DIST_CM = 40.0f;  // “Soft obstacle” threshold (front)
 const float AVOID_DIST_HYST = 3.5f;   // Hysteresis to avoid oscillating near threshold
 const float TURN_BALANCE_CM = 5.5f;   // If L/R scan distances are within this, alternate turns
-const int INVALID_DIST_LIMIT = 3;     // How many invalid front reads allowed before treating as blocked
+const int INVALID_DIST_LIMIT = 2;     // How many invalid front reads allowed before treating as blocked
 
 const float STUCK_LOW_DIST_CM = 45.0f;        // If front stays under this, consider “stuck”
 const unsigned long STUCK_LOW_DIST_MS = 500;  // How long low distance must persist (ms)
@@ -78,8 +78,8 @@ const int LEFT_MOTOR_TRIM = 0;         // Small correction for left PWM
 const int RIGHT_MOTOR_TRIM = 0;        // Small correction for right PWM
 
 const int MIN_PWM = 45;    // Minimum effective PWM (below this motors may not move)
-const int DRIVE_PWM = 75;  // Forward/back cruising PWM
-const int TURN_PWM = 100;   // Turning PWM (spin turns)
+const int DRIVE_PWM = 65;  // Forward/back cruising PWM
+const int TURN_PWM = 100;  // Turning PWM (spin turns)
 
 // =====================================================
 // ULTRASONIC CONFIG
@@ -112,9 +112,12 @@ const int SERVO_PERIOD_US = 20000;          // Servo frame period (us)
 // FIRE (FROM ESP32) CONFIG
 // =====================================================
 
-const float FIRE_ON_TH = 0.65f;            // Fire turns ON above this confidence
-const float FIRE_OFF_TH = 0.45f;           // Fire turns OFF below this confidence
-const unsigned long FIRE_STALE_MS = 2500;  // If no new fire frame in this time, treat as stale
+const float FIRE_ON_TH = 0.85f;            // Fire turns ON above this confidence
+const float FIRE_OFF_TH = 0.75f;           // Fire turns OFF below this confidence
+const unsigned long FIRE_STALE_MS = 1500;  // If no new fire frame in this time, treat as stale
+const float FIRE_FILTER_ALPHA = 0.25f;
+const unsigned long FIRE_ON_HOLD_MS = 900;
+const unsigned long FIRE_OFF_HOLD_MS = 1400;
 
 // =====================================================
 // GAS CONFIG
@@ -123,17 +126,17 @@ const unsigned long FIRE_STALE_MS = 2500;  // If no new fire frame in this time,
 const unsigned long GAS_CALIBRATION_MS = 6000;  // Calibration duration at startup (ms)
 
 const float GAS_RISE_SEEK = 12.0f;        // “Rising fast” threshold to enter/keep hunt
-const int GAS_ANOMALY_LEVEL = 120;        // Absolute gas level considered “anomaly”
-const int GAS_LOCK_MARGIN = 8;            // Within peak-margin + low rise => lock condition
-const unsigned long GAS_LOST_MS = 2250;   // If gas not seen for this long, drop to PASSIVE
-const float GAS_LOCK_LIKELYHOOOD = 4.0f;  // Max threshold for locking into LOCK mode
-const int GAS_LOCK_MIN_LEVEL = 155;
-const int GAS_LOCK_MIN_PEAK = 165;
-const unsigned long GAS_HUNT_MIN_MS = 1600;
-const unsigned long GAS_LOCK_STABLE_MS = 500;
-const unsigned long GAS_LOCK_HOLD_MS = 8000;
+const int GAS_ANOMALY_LEVEL = 95;        // Absolute gas level considered “anomaly”
+const int GAS_LOCK_MARGIN = 15;            // Within peak-margin + low rise => lock condition
+const unsigned long GAS_LOST_MS = 1500;   // If gas not seen for this long, drop to PASSIVE
+const float GAS_LOCK_LIKELYHOOOD = 8.0f;  // Max threshold for locking into LOCK mode
+const int GAS_LOCK_MIN_LEVEL = 135;
+const int GAS_LOCK_MIN_PEAK = 145;
+const unsigned long GAS_HUNT_MIN_MS = 1000;
+const unsigned long GAS_LOCK_STABLE_MS = 300;
+const unsigned long GAS_LOCK_HOLD_MS = 4500;
 const int GAS_SEEN_OFF_LEVEL = GAS_ANOMALY_LEVEL - 25;
-const unsigned long GAS_HUNT_STARTUP_BLOCK_MS = 12000;
+const unsigned long GAS_HUNT_STARTUP_BLOCK_MS = 3500;
 
 // =====================================================
 // RUNTIME VARIABLES (DO NOT CHANGE SET VALUES)
@@ -149,6 +152,11 @@ static unsigned long lastFireReceive = 0;  // Last time fire frame received (ms)
 static bool fireActive = false;            // Hysteresis-applied fire state
 static bool fanOn = false;                 // Cached fan state
 static unsigned long fanHoldUntilMs = 0;   // Fan hold timer (ms)
+static float fireFilt = 0.0f;
+static bool fireFiltInit = false;
+static unsigned long fireAboveSinceMs = 0;
+static unsigned long fireBelowSinceMs = 0;
+
 
 // ---- Motor runtime ----
 static int lastLeftSign = 0;   // Last commanded direction sign for left motor
@@ -233,6 +241,11 @@ static bool gasPresent = false;
 static unsigned long lockStableSinceMs = 0;
 static unsigned long lockHoldUntilMs = 0;
 static unsigned long highSinceMs = 0;
+
+void invalidateProbes() {
+  probeL = -1.0f;
+  probeR = -1.0f;
+}
 
 void setLocomotionState(LocomotionState s, unsigned long durationMs) {
   locoState = s;
@@ -346,6 +359,51 @@ float readDistanceAtAngle(int angleDeg) {
   return readUltrasonicMedian();
 }
 
+void updateFireLogic(unsigned long now) {
+  bool fireValid = (now - lastFireReceive) <= FIRE_STALE_MS;
+
+  if (!fireValid) {
+    fireActive = false;
+    fireFiltInit = false;
+    fireAboveSinceMs = 0;
+    fireBelowSinceMs = 0;
+    return;
+  }
+
+  float x = fireConfidence;
+  if (!(x >= 0.0f)) x = 0.0f;
+  if (x > 1.0f) x = 1.0f;
+
+  if (!fireFiltInit) {
+    fireFilt = x;
+    fireFiltInit = true;
+  } else {
+    fireFilt = fireFilt * (1.0f - FIRE_FILTER_ALPHA) + x * FIRE_FILTER_ALPHA;
+  }
+
+  if (!fireActive) {
+    if (fireFilt >= FIRE_ON_TH) {
+      if (fireAboveSinceMs == 0) fireAboveSinceMs = now;
+      if (now - fireAboveSinceMs >= FIRE_ON_HOLD_MS) {
+        fireActive = true;
+        fireBelowSinceMs = 0;
+      }
+    } else {
+      fireAboveSinceMs = 0;
+    }
+  } else {
+    if (fireFilt <= FIRE_OFF_TH) {
+      if (fireBelowSinceMs == 0) fireBelowSinceMs = now;
+      if (now - fireBelowSinceMs >= FIRE_OFF_HOLD_MS) {
+        fireActive = false;
+        fireAboveSinceMs = 0;
+      }
+    } else {
+      fireBelowSinceMs = 0;
+    }
+  }
+}
+
 void updateStuckMonitor() {
   unsigned long now = millis();
 
@@ -427,7 +485,7 @@ void updateGasHuntState(unsigned long now) {
 
   const bool gasRisingFast = (sensors.gasRise >= GAS_RISE_SEEK);
 
-  if (sensors.gasRaw > gasPeak + 2) {
+  if (sensors.gasRaw > gasPeak + 6) {
     gasPeak = sensors.gasRaw;
     lastPeakMs = now;
   }
@@ -439,7 +497,7 @@ void updateGasHuntState(unsigned long now) {
   const bool peakGood = (gasPeak >= GAS_LOCK_MIN_PEAK);
   const bool levelGood = (sensors.gasRaw >= GAS_LOCK_MIN_LEVEL);
 
-  if (stableRise && nearPeak && peakGood && levelGood && (now - lastPeakMs) >= 300) {
+  if (stableRise && nearPeak && peakGood && levelGood && (now - lastPeakMs) >= 115) {
     if (lockStableSinceMs == 0) lockStableSinceMs = now;
   } else {
     lockStableSinceMs = 0;
@@ -493,11 +551,6 @@ void updateGasHuntState(unsigned long now) {
   }
 }
 
-static void invalidateProbes() {
-  probeL = -1.0f;
-  probeR = -1.0f;
-}
-
 void navigationUpdate() {
   unsigned long now = millis();
 
@@ -548,12 +601,18 @@ void navigationUpdate() {
     if (!lockCentered) {
       servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
       lockCentered = true;
+      delay(120);
+      fanOn = true;
+      digitalWrite(PIN_FAN, HIGH);
     }
     setLocomotionState(STOPPED, 150);
     return;
   } else {
     lockCentered = false;
+    fanOn = false;
+    digitalWrite(PIN_FAN, LOW);
   }
+
 
   if (now < stateUntilMs) {
     if (locoState == BACKWARD)
@@ -1081,8 +1140,8 @@ int readCalibratedGasStrength() {
   }
   maxDelta = b;
 
-  int onTh = gasDead + 10;
-  int offTh = gasDead + 4;
+  int onTh = gasDead + 6;
+  int offTh = gasDead + 2;
 
   if (!gasActive) {
     if (maxDelta >= onTh) gasActive = true;
@@ -1136,33 +1195,35 @@ void updateSensorSnapshot() {
     sensors.gasRise = 0.0f;
     gasFilterInit = true;
   } else {
-    gasEma = gasEma * 0.96f + sensors.gasRaw * 0.04f;
-    gasFast = gasFast * 0.93f + sensors.gasRaw * 0.07f;
+    gasEma = gasEma * 0.98f + sensors.gasRaw * 0.02f;
+    gasFast = gasFast * 0.96f + sensors.gasRaw * 0.04f;
     sensors.gasRise = gasFast - gasEma;
   }
 }
 
 void readTelemetryFrame() {
-  static char line[48];
+  static char line[64];
   static uint8_t len = 0;
 
   while (Serial.available() > 0) {
     char c = (char)Serial.read();
 
     if (c == '\n' || c == '\r') {
-      if (len == 0)
-        continue;
+      if (len == 0) continue;
       line[len] = '\0';
       len = 0;
 
       const char *pfx = "FIRE32,confidence=";
-      const size_t pfxLen = 17;
+      const size_t pfxLen = strlen(pfx); 
 
       if (strncmp(line, pfx, pfxLen) == 0) {
         const char *v = line + pfxLen;
         char *endp = nullptr;
         float val = (float)strtod(v, &endp);
+
         if (endp != v) {
+          if (val < 0.0f) val = 0.0f;
+          if (val > 1.0f) val = 1.0f;
           fireConfidence = val;
           lastFireReceive = millis();
         }
@@ -1170,10 +1231,8 @@ void readTelemetryFrame() {
       continue;
     }
 
-    if (len < sizeof(line) - 1)
-      line[len++] = c;
-    else
-      len = 0;
+    if (len < sizeof(line) - 1) line[len++] = c;
+    else len = 0;  // overflow protection
   }
 }
 
@@ -1277,7 +1336,7 @@ void displayTick(U8G2 &display) {
     float dcm = sensors.distCenter;
 
     bool fireValid = (millis() - lastFireReceive) <= FIRE_STALE_MS;
-    int firePct = (int)(fireConfidence * 100.0f + 0.5f);
+    int firePct = (int)(fireFilt * 100.0f + 0.5f);
     firePct = clampi(firePct, 0, 100);
 
     const char *status = "OK";
@@ -1398,14 +1457,6 @@ void soundTick() {
 
   uint8_t loud = ldrLoudLevel();
   bool dark = (loud == 2);
-
-  bool fireValid = (now - lastFireReceive) <= FIRE_STALE_MS;
-  if (!fireValid) {
-    fireActive = false;
-  } else {
-    if (!fireActive && fireConfidence >= FIRE_ON_TH) fireActive = true;
-    if (fireActive && fireConfidence <= FIRE_OFF_TH) fireActive = false;
-  }
 
   if (gasState != prevGas) {
     if (gasState == LOCK) {
@@ -1581,6 +1632,7 @@ void setup() {
 void loop() {
   unsigned long now = millis();
   readTelemetryFrame();
+  updateFireLogic(millis());
   updateSensorSnapshot();
   navigationUpdate();
   updateFanLogic();
