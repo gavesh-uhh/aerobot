@@ -5,7 +5,7 @@
 U8G2_SH1107_SEEED_128X128_1_HW_I2C display(U8G2_R0, U8X8_PIN_NONE);
 
 // =====================================================
-// PIN MAP
+// PIN MAP CONFIG
 // =====================================================
 
 const int PIN_FAN = 8;        // Fan Relay
@@ -64,45 +64,39 @@ const unsigned long STUCK_COOLDOWN_MS = 800;  // Cooldown after stuck recovery (
 
 // =====================================================
 // LDR
-//
+// =====================================================
 const int LDR_DARK_TH = 650;
 const int LDR_BRIGHT_TH = 450;
 
 // =====================================================
 // MOTOR / DRIVE CONFIG
 // =====================================================
-
 const bool INVERT_LEFT_MOTOR = true;   // Flip left motor direction if wiring reversed
 const bool INVERT_RIGHT_MOTOR = true;  // Flip right motor direction if wiring reversed
 const int LEFT_MOTOR_TRIM = 0;         // Small correction for left PWM
 const int RIGHT_MOTOR_TRIM = 0;        // Small correction for right PWM
-
-const int MIN_PWM = 45;    // Minimum effective PWM (below this motors may not move)
-const int DRIVE_PWM = 65;  // Forward/back cruising PWM
-const int TURN_PWM = 100;  // Turning PWM (spin turns)
+const int MIN_PWM = 45;                // Minimum effective PWM (below this motors may not move)
+const int DRIVE_PWM = 65;              // Forward/back cruising PWM
+const int TURN_PWM = 100;              // Turning PWM (spin turns)
 
 // =====================================================
 // ULTRASONIC CONFIG
 // =====================================================
-
 const unsigned long ULTRASONIC_TIMEOUT_US = 9500;  // pulseIn timeout (us) ~ max ~280cm-ish
 const float CM_PER_MICROSECOND = 0.0343f / 2.0f;   // Speed of sound conversion to cm (round-trip /2)
 
 // =====================================================
 // TIMING / TELEMETRY
 // =====================================================
-
 const unsigned long DIR_DEADTIME_MS = 2;  // Deadtime when reversing motor direction (ms)
 const unsigned long TELEMETRY_MS = 100;   // Telemetry frame period (ms)
 
 // =====================================================
 // SERVO CONFIG (MANUAL PULSE CONTROL)
 // =====================================================
-
-const int SERVO_ANGLE_LEFT = 135;   // Servo angle for left scan
-const int SERVO_ANGLE_CENTER = 75;  // Servo center angle
-const int SERVO_ANGLE_RIGHT = 35;   // Servo angle for right scan
-
+const int SERVO_ANGLE_LEFT = 135;           // Servo angle for left scan
+const int SERVO_ANGLE_CENTER = 75;          // Servo center angle
+const int SERVO_ANGLE_RIGHT = 35;           // Servo angle for right scan
 const unsigned long SERVO_SETTLE_MS = 120;  // Typical settle time for scans (ms)
 const int SERVO_PULSE_MIN_US = 600;         // Servo min pulse width (us)
 const int SERVO_PULSE_MAX_US = 2400;        // Servo max pulse width (us)
@@ -111,33 +105,29 @@ const int SERVO_PERIOD_US = 20000;          // Servo frame period (us)
 // =====================================================
 // FIRE (FROM ESP32) CONFIG
 // =====================================================
-
-const float FIRE_ON_TH = 0.95f;            // Fire turns ON above this confidence
-const float FIRE_OFF_TH = 0.85f;           // Fire turns OFF below this confidence
+const float FIRE_ON_TH = 0.75f;            // Fire turns ON above this confidence
+const float FIRE_OFF_TH = 0.65f;           // Fire turns OFF below this confidence
 const unsigned long FIRE_STALE_MS = 1500;  // If no new fire frame in this time, treat as stale
 const float FIRE_FILTER_ALPHA = 0.25f;
-const unsigned long FIRE_ON_HOLD_MS = 900;
-
-const unsigned long FIRE_OFF_HOLD_MS = 1400;
+const unsigned long FIRE_ON_HOLD_MS = 500;
+const unsigned long FIRE_OFF_HOLD_MS = 1300;
 
 // =====================================================
 // GAS CONFIG
 // =====================================================
-
-const unsigned long GAS_CALIBRATION_MS = 6000;  // Calibration duration at startup (ms)
-
-const float GAS_RISE_SEEK = 12.0f;        // “Rising fast” threshold to enter/keep hunt
-const int GAS_ANOMALY_LEVEL = 95;        // Absolute gas level considered “anomaly”
-const int GAS_LOCK_MARGIN = 15;            // Within peak-margin + low rise => lock condition
-const unsigned long GAS_LOST_MS = 1500;   // If gas not seen for this long, drop to PASSIVE
-const float GAS_LOCK_LIKELYHOOOD = 8.0f;  // Max threshold for locking into LOCK mode
-const int GAS_LOCK_MIN_LEVEL = 135;
-const int GAS_LOCK_MIN_PEAK = 145;
-const unsigned long GAS_HUNT_MIN_MS = 1000;
-const unsigned long GAS_LOCK_STABLE_MS = 300;
-const unsigned long GAS_LOCK_HOLD_MS = 4500;
-const int GAS_SEEN_OFF_LEVEL = GAS_ANOMALY_LEVEL - 25;
-const unsigned long GAS_HUNT_STARTUP_BLOCK_MS = 3500;
+const unsigned long GAS_CALIBRATION_MS = 6000;          // Calibration duration at startup (ms)
+const float GAS_RISE_SEEK = 10.0f;                      // “Rising fast” threshold to enter/keep HUNT
+const int GAS_ANOMALY_LEVEL = 100;                      // Gas level that counts as “anomaly / present”
+const int GAS_LOCK_MARGIN = 12;                         // Within (peak - margin) = “near peak”
+const unsigned long GAS_LOST_MS = 3500;                 // If gas not seen for this long, drop to PASSIVE
+const float GAS_LOCK_LIKELYHOOOD = 8.0f;                // Max rise to consider stable for LOCK
+const int GAS_LOCK_MIN_LEVEL = 135;                     // Minimum current gas level required to allow LOCK
+const int GAS_LOCK_MIN_PEAK = 145;                      // Minimum peak reached in HUNT to allow LOCK
+const unsigned long GAS_HUNT_MIN_MS = 3500;             // Minimum time to stay in HUNT before LOCK is allowed
+const unsigned long GAS_LOCK_STABLE_MS = 300;           // Stable-near-peak time required before switching to LOCK
+const unsigned long GAS_LOCK_HOLD_MS = 4000;            // Hold LOCK at least this long once entered
+const int GAS_SEEN_OFF_LEVEL = GAS_ANOMALY_LEVEL - 25;  // Gas stays “present” until below this
+const unsigned long GAS_HUNT_STARTUP_BLOCK_MS = 3500;   // Ignore gas hunting for this long after boot (sensor warmup)
 
 // =====================================================
 // RUNTIME VARIABLES (DO NOT CHANGE SET VALUES)
@@ -345,7 +335,6 @@ void servoWriteAngleBlocking(int angleDeg, unsigned long settleMs) {
 unsigned long computeBackupMs(float d, unsigned long baseMs) {
   if (d <= 0)
     return baseMs;
-
   if (d < 18.0f)
     return baseMs + 80;
   if (d < 28.0f)
@@ -555,6 +544,14 @@ void updateGasHuntState(unsigned long now) {
 void navigationUpdate() {
   unsigned long now = millis();
 
+  // PATCH: Stop if fire detects, also resets any steer biases we prev had @Gavesh
+  if (fireActive) {
+    pendingTurnValid = false;
+    steerBias = 0;
+    setLocomotionState(STOPPED, 200);
+    return;
+  }
+
   // PATCH: Direction Decay
   if (steerBias != 0 && now >= steerUntilMs) {
     steerBias = (steerBias * 7) / 10;
@@ -603,17 +600,14 @@ void navigationUpdate() {
       servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
       lockCentered = true;
       delay(120);
-      fanOn = true;
-      digitalWrite(PIN_FAN, HIGH);
+      setFan(true);
     }
     setLocomotionState(STOPPED, 150);
     return;
   } else {
     lockCentered = false;
-    fanOn = false;
-    digitalWrite(PIN_FAN, LOW);
+    setFan(false);
   }
-
 
   if (now < stateUntilMs) {
     if (locoState == BACKWARD)
@@ -1215,7 +1209,7 @@ void readTelemetryFrame() {
       len = 0;
 
       const char *pfx = "FIRE32,confidence=";
-      const size_t pfxLen = strlen(pfx); 
+      const size_t pfxLen = strlen(pfx);
 
       if (strncmp(line, pfx, pfxLen) == 0) {
         const char *v = line + pfxLen;
@@ -1437,10 +1431,8 @@ void displayTick(U8G2 &display) {
 static uint8_t ldrLoudLevel() {
   static bool dark = false;
   int l = sensors.ldr;
-
   if (!dark && l >= LDR_DARK_TH) dark = true;
   else if (dark && l <= LDR_BRIGHT_TH) dark = false;
-
   return dark ? 2 : 1;
 }
 
@@ -1606,6 +1598,7 @@ void updateFanLogic() {
 }
 
 void setup() {
+  digitalWrite(PIN_FAN, HIGH); // HIGH MEANS OFF HERE DONT ASK - @Gavesh
   playStartupBeep();
   Serial.begin(57600);
   pinMode(PIN_PIR, INPUT);
@@ -1618,7 +1611,6 @@ void setup() {
   pinMode(PIN_BUZZER, OUTPUT);
   pinMode(PIN_SERVO, OUTPUT);
   pinMode(PIN_FAN, OUTPUT);
-  digitalWrite(PIN_FAN, LOW);
   display.begin();
   display.setBusClock(400000);
   display.clearBuffer();
@@ -1627,7 +1619,7 @@ void setup() {
   stopAllMotors();
   servoWriteAngleBlocking(SERVO_ANGLE_CENTER, SERVO_SETTLE_MS);
   calibrateGasSensors(GAS_CALIBRATION_MS);
-  gasBootBlockUntilMs = millis() + GAS_HUNT_STARTUP_BLOCK_MS;
+  gasBootBlockUntilMs = millis() + GAS_HUNT_STARTUP_BLOCK_MS; // basically dont go to a noisy gas hunt at the start for x seconds
 }
 
 void loop() {

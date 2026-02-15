@@ -24,9 +24,9 @@ static const uint32_t RED_BLINK_MS = 120;
 static const int LDR_FLASH_ON = 850;
 static const int LDR_FLASH_OFF = 780;
 
-static const char *WIFI_SSID = "YOUR_SSID";
-static const char *WIFI_PASS = "YOUR_PASS";
-static const char *AP_SSID = "ESP32-RX";
+static const char *WIFI_SSID = "Gavesh";
+static const char *WIFI_PASS = "123123123";
+static const char *AP_SSID = "Aerobot AP";
 static const char *AP_PASS = "esp32rx1";
 
 static WebServer server(80);
@@ -35,37 +35,37 @@ static const bool ENABLE_SERVER_PUSH = true;
 static const char *SERVER_HOST = "172.20.10.4";
 static const uint16_t SERVER_PORT = 3000;
 static const char *SERVER_FEED_PATH = "/feed";
-static const uint32_t FEED_INTERVAL_MS = 1000;
-
+static const uint32_t FEED_INTERVAL_MS = 500;
 static const uint32_t FIRE_CHECK_INTERVAL_MS = 500;
 
 static const int GAS_RISE_ASSIST_TH = 18;
 
-static const float FIRE_ON_TH_ASSIST = 0.62f;
-static const float FIRE_OFF_TH_ASSIST = 0.54f;
-static const float FIRE_ON_TH_STRONG = 0.45f;
-static const float FIRE_OFF_TH_STRONG = 0.35f;
+static const float FIRE_ON_TH_ASSIST = 0.45f;
+static const float FIRE_OFF_TH_ASSIST = 0.35f;
+static const float FIRE_ON_TH_STRONG = 0.30f;
+static const float FIRE_OFF_TH_STRONG = 0.22f;
 
-static const float FIRE_EMA_ALPHA = 0.50f;
-
-static const uint8_t FIRE_ON_HITS = 2;
+static const float FIRE_EMA_ALPHA = 0.70f;
+static const uint8_t FIRE_ON_HITS = 1;
 static const uint8_t FIRE_OFF_HITS = 2;
 
-static const int FIRE_SCAN_STEP = 2;
-static const int FIRE_SCAN_X0_DIV = 6;
-static const int FIRE_SCAN_X1_DIV = 6;
-static const int FIRE_SCAN_Y0_DIV = 6;
-static const int FIRE_SCAN_Y1_DIV = 6;
+static const int FIRE_SCAN_STEP = 1;
+static const int FIRE_SCAN_X0_DIV = 4;
+static const int FIRE_SCAN_X1_DIV = 4;
+static const int FIRE_SCAN_Y0_DIV = 4;
+static const int FIRE_SCAN_Y1_DIV = 4;
 
-static const int FIRE_WHITE_Y_MIN = 235;
-static const int FIRE_WHITE_SAT_MAX = 18;
+static const int FIRE_WHITE_Y_MIN = 245;
+static const int FIRE_WHITE_SAT_MAX = 12;
 
-static const int FIRE_CAND_Y_MIN = 72;
-static const int FIRE_CAND_SAT_MIN = 24;
-static const int FIRE_CAND_R_MIN = 150;
-static const int FIRE_CAND_RG_MIN = 12;
-static const int FIRE_CAND_CR_MIN = 150;
-static const int FIRE_CAND_CB_MAX = 150;
+static const int FIRE_CAND_Y_MIN = 75;
+static const int FIRE_CAND_SAT_MIN = 40;
+static const int FIRE_CAND_R_MIN = 160;
+static const int FIRE_CAND_G_MIN = 85;
+static const int FIRE_CAND_B_MAX = 150;
+static const int FIRE_CAND_RG_MIN = 35;
+static const int FIRE_CAND_CR_MIN = 165;
+static const int FIRE_CAND_CB_MAX = 135;
 
 static const int FIRE_CORE_Y_MIN = 140;
 static const int FIRE_CORE_R_MIN = 200;
@@ -76,13 +76,14 @@ static const int FIRE_STRONG_R_MIN = 218;
 static const int FIRE_STRONG_G_MIN = 108;
 static const int FIRE_STRONG_CR_MIN = 178;
 
-static const int FIRE_MIN_PIX = 4;
+static const int FIRE_MIN_PIX = 3;
 static const int FIRE_MIN_BW = 3;
 static const int FIRE_MIN_BH = 3;
 
-static const float FIRE_DENSITY_MIN = 0.09f;
+static const float FIRE_DENSITY_MIN = 0.05f;
 static const float FIRE_CORE_RATIO_MIN = 0.03f;
 static const float FIRE_AVGY_MIN = 85.0f;
+
 static const float FIRE_RAW_INSTANT_TH = 0.90f;
 
 static const float FIRE_W_AREA = 14.0f;
@@ -90,22 +91,20 @@ static const float FIRE_W_DENSITY = 0.35f;
 static const float FIRE_W_CORE = 0.45f;
 static const float FIRE_W_STRONG = 0.25f;
 
-static const float FIRE_PROBE_C1_MIN = 0.18f;
-static const float FIRE_PROBE_C1_MAX = 0.95f;
+static const float FIRE_PROBE_C1_MIN = 0.10f;
+static const float FIRE_PROBE_C1_MAX = 0.98f;
 
 static const uint32_t FIRE_PROBE_DELAY_MS = 30;
-static const float FIRE_PROBE_D_START = 0.06f;
-static const float FIRE_PROBE_D_RANGE = 0.14f;
-static const float FIRE_PROBE_PENALTY_STRENGTH = 0.65f;
-static const float FIRE_PROBE_D_HARD = 0.14f;
-static const float FIRE_PROBE_HARD_MULT = 0.55f;
+static const float FIRE_PROBE_D_START = 0.03f;
+static const float FIRE_PROBE_D_RANGE = 0.10f;
+static const float FIRE_PROBE_PENALTY_STRENGTH = 0.85f;
+static const float FIRE_PROBE_D_HARD = 0.08f;
+static const float FIRE_PROBE_HARD_MULT = 0.35f;
 
-#define LOG_LINES 20
+static const bool RGB565_SWAP_BYTES = true;
+
 #define MAX_LINE 240
 
-static char logLines[LOG_LINES][MAX_LINE];
-static int logHead = 0;
-static int logCount = 0;
 static char rxBuf[MAX_LINE];
 static int rxLen = 0;
 static char lastLine[MAX_LINE];
@@ -126,7 +125,6 @@ struct LiveData {
 };
 
 static LiveData live;
-static bool doParse = true;
 
 static bool flashOn = false;
 static bool sentForThisFire = false;
@@ -168,22 +166,8 @@ static sensor_t *cam = nullptr;
 #define HREF_GPIO_NUM 23
 #define PCLK_GPIO_NUM 22
 
-static inline void setFlash(uint8_t v) {
-  ledcWrite(LED_FLASH_PIN, v);
-}
-static inline void setRed(bool on) {
-  digitalWrite(LED_RED_PIN, on ? HIGH : LOW);
-}
-
-static void pushLine(const char *s) {
-  strncpy(logLines[logHead], s, MAX_LINE - 1);
-  logLines[logHead][MAX_LINE - 1] = 0;
-  logHead = (logHead + 1) % LOG_LINES;
-  if (logCount < LOG_LINES) logCount++;
-  strncpy(lastLine, s, MAX_LINE - 1);
-  lastLine[MAX_LINE - 1] = 0;
-  lastRxMs = millis();
-}
+static inline void setFlash(uint8_t v) { ledcWrite(LED_FLASH_PIN, v); }
+static inline void setRed(bool on) { digitalWrite(LED_RED_PIN, on ? HIGH : LOW); }
 
 static bool parseLiveLine(const char *line) {
   if (strncmp(line, "UNO,", 4) != 0) return false;
@@ -236,21 +220,27 @@ static void sendFeedIfReady() {
   int fireState = fireStateHys ? 1 : 0;
 
   char data[240];
-  snprintf(data, sizeof(data), "DATA,%.3f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
+  snprintf(data, sizeof(data), "DATA,%.3f,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
            fireConf, fireState, live.locoState, live.gasState, live.mq2,
            live.mq7, live.mq135, live.gasRaw, live.gasRise, live.pir, live.dist,
-           live.ldr, (int)ESP.getFreeHeap(), (int)(dbg_probeDelta * 1000));
+           live.ldr, (int)ESP.getFreeHeap());
 
   char url[380];
   snprintf(url, sizeof(url), "http://%s:%u%s?data=%s", SERVER_HOST, SERVER_PORT, SERVER_FEED_PATH, data);
 
   WiFiClient client;
   HTTPClient http;
-  http.setTimeout(600);
+  http.setTimeout(2000);
   if (http.begin(client, url)) {
     http.GET();
     http.end();
   }
+}
+
+static inline uint16_t read565(const uint16_t *p) {
+  uint16_t v = *p;
+  if (!RGB565_SWAP_BYTES) return v;
+  return (uint16_t)((v << 8) | (v >> 8));
 }
 
 static inline void rgb565_to_rgb888(uint16_t p, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -289,7 +279,7 @@ static float scoreFireFromFb(camera_fb_t *fb) {
       int sx = x / FIRE_SCAN_STEP;
 
       uint8_t r, g, b;
-      rgb565_to_rgb888(px[row + x], r, g, b);
+      rgb565_to_rgb888(read565(&px[row + x]), r, g, b);
 
       int maxc = r;
       if (g > maxc) maxc = g;
@@ -312,7 +302,15 @@ static float scoreFireFromFb(camera_fb_t *fb) {
       }
 
       bool cand =
-        (Y > FIRE_CAND_Y_MIN) && (sat > FIRE_CAND_SAT_MIN) && (r > FIRE_CAND_R_MIN) && (r > g) && (g >= b) && ((r - g) > FIRE_CAND_RG_MIN) && (Cr > FIRE_CAND_CR_MIN) && (Cb < FIRE_CAND_CB_MAX);
+        (Y > FIRE_CAND_Y_MIN) &&
+        (sat > FIRE_CAND_SAT_MIN) &&
+        (r > FIRE_CAND_R_MIN) &&
+        (g > FIRE_CAND_G_MIN) &&
+        (b < FIRE_CAND_B_MAX) &&
+        (r > g) && (g >= b) &&
+        ((r - g) > FIRE_CAND_RG_MIN) &&
+        (Cr > FIRE_CAND_CR_MIN) &&
+        (Cb < FIRE_CAND_CB_MAX);
 
       if (cand) {
         m.fire++;
@@ -363,11 +361,21 @@ static float scoreFireFromFb(camera_fb_t *fb) {
   dbg_core = coreR;
   dbg_avgY = avgY;
 
+  int roiW = (x1 - x0) / FIRE_SCAN_STEP;
+  int roiH = (y1 - y0) / FIRE_SCAN_STEP;
+  if (bw > (int)(roiW * 0.90f) && bh > (int)(roiH * 0.90f)) return 0.0f;
+
   if (density < FIRE_DENSITY_MIN) return 0.0f;
   if (coreR < FIRE_CORE_RATIO_MIN) return 0.0f;
   if (avgY < FIRE_AVGY_MIN) return 0.0f;
 
   float conf = area * FIRE_W_AREA + density * FIRE_W_DENSITY + coreR * FIRE_W_CORE + strongR * FIRE_W_STRONG;
+  if (conf > 1.0f) conf = 1.0f;
+  if (conf < 0.0f) conf = 0.0f;
+
+  float strongBoost = 0.35f + 0.65f * fminf(1.0f, strongR / 0.10f);
+  conf *= strongBoost;
+
   if (conf > 1.0f) conf = 1.0f;
   if (conf < 0.0f) conf = 0.0f;
   return conf;
@@ -513,12 +521,12 @@ static void handleCam() {
     return;
   }
 
-  int ae = argInt("ae", 1);
-  int ag = argInt("ag", 1);
-  int wb = argInt("wb", 1);
-  int awb = argInt("awb", 1);
-  int aec = argInt("aec", 700);
-  int agc = argInt("agc", 16);
+  int ae = argInt("ae", 0);
+  int ag = argInt("ag", 0);
+  int wb = argInt("wb", 0);
+  int awb = argInt("awb", 0);
+  int aec = argInt("aec", 500);
+  int agc = argInt("agc", 0);
 
   cam->set_exposure_ctrl(cam, ae ? 1 : 0);
   cam->set_gain_ctrl(cam, ag ? 1 : 0);
@@ -560,16 +568,18 @@ static void init_camera() {
   c.fb_location = CAMERA_FB_IN_PSRAM;
   c.grab_mode = CAMERA_GRAB_LATEST;
 
-  esp_camera_init(&c);
+  esp_err_t err = esp_camera_init(&c);
 
   sensor_t *s = esp_camera_sensor_get();
   cam = s;
 
-  if (s) {
-    s->set_exposure_ctrl(s, 1);
-    s->set_gain_ctrl(s, 1);
-    s->set_whitebal(s, 1);
-    s->set_awb_gain(s, 1);
+  if (err == ESP_OK && s) {
+    s->set_exposure_ctrl(s, 0);
+    s->set_gain_ctrl(s, 0);
+    s->set_whitebal(s, 0);
+    s->set_awb_gain(s, 0);
+    s->set_aec_value(s, 500);
+    s->set_agc_gain(s, 0);
     s->set_brightness(s, 0);
     s->set_contrast(s, 1);
     s->set_saturation(s, 1);
@@ -598,7 +608,7 @@ static void handleRoot() {
            "a{color:#9fb1c1;text-decoration:none;}"
            "</style></head><body>"
            "<div class='card'>"
-           "<div class='muted'>IP: %u.%u.%u.%u · <a href='/status'>/status</a> · <a href='/cam?ae=1&ag=1&wb=1&awb=1'>cam auto</a></div>"
+           "<div class='muted'>IP: %u.%u.%u.%u · <a href='/status'>/status</a> · <a href='/cam?ae=0&ag=0&wb=0&awb=0&aec=500&agc=0'>cam lock</a> · <a href='/cam?ae=1&ag=1&wb=1&awb=1'>cam auto</a></div>"
            "<pre id='out'>loading...</pre>"
            "</div>"
            "<script>"
@@ -636,9 +646,7 @@ static void handleStatus() {
            "firePix=%d  bw=%d  bh=%d\n"
            "density=%.3f  core=%.3f  avgY=%.1f\n"
            "Flash: %s\n"
-           "Heap: %u\n\n"
-           "/cam?ae=1&ag=1&wb=1&awb=1\n"
-           "/cam?ae=0&ag=0&wb=0&awb=0&aec=700&agc=16",
+           "Heap: %u\n",
            lastLine[0] ? lastLine : "(none)",
            live.valid ? live.version : 0,
            live.valid ? live.locoState : 0,
@@ -711,8 +719,13 @@ void loop() {
 
     if (c == '\n') {
       rxBuf[rxLen] = 0;
-      pushLine(rxBuf);
-      if (doParse) parseLiveLine(rxBuf);
+
+      strncpy(lastLine, rxBuf, MAX_LINE - 1);
+      lastLine[MAX_LINE - 1] = 0;
+      lastRxMs = millis();
+
+      parseLiveLine(rxBuf);
+
       rxLen = 0;
       gotLine = true;
     } else if (c != '\r') {
@@ -746,7 +759,7 @@ void loop() {
   if (now - lastFireCheck >= FIRE_CHECK_INTERVAL_MS) {
     lastFireCheck = now;
 
-    bool allowProbe = live.valid && (live.ldr > LDR_FLASH_ON);
+    bool allowProbe = (dbg_confRaw > 0.20f);
 
     uint8_t saved = flashOn ? LED_ON_LEVEL : 0;
     if (saved) setFlash(0);

@@ -317,6 +317,7 @@ app.get("/ui", (req, res) => {
   --muted: #6b7280;
   --accent: #10a37f;
   --danger: #d14343;
+  --fire: #e11d48;
 }
 * { box-sizing: border-box; }
 body {
@@ -371,6 +372,15 @@ h1 { margin: 6px 0 0; font-size: 28px; font-weight: 600; }
   font-weight: 700;
 }
 .banner-detail{ margin-top: 8px; font-size: 13px; color: var(--text); }
+
+.banner.fire{
+  border: 1px solid rgba(225,29,72,0.45);
+  background: rgba(225,29,72,0.10);
+}
+.banner.fire .banner-title{
+  color: var(--fire);
+}
+
 .meta {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -545,6 +555,11 @@ h1 { margin: 6px 0 0; font-size: 28px; font-weight: 600; }
   <div id="statusPill" class="status" aria-live="polite">Waiting for data</div>
 </header>
 
+<div id="fireAlertBanner" class="banner fire hidden">
+  <div class="banner-title">FIRE DETECTED</div>
+  <div id="fireAlertBannerDetail" class="banner-detail">--</div>
+</div>
+
 <div id="alertBanner" class="banner hidden">
   <div class="banner-title">POSSIBLE GAS HOTSPOT FOUND</div>
   <div id="alertBannerDetail" class="banner-detail">--</div>
@@ -710,7 +725,6 @@ function drawSparkline() {
   ctx.stroke();
 }
 
-// ----------------- Relative hotspot classifier (NO hard thresholds) -----------------
 const baselines = { mq2: null, mq7: null, mq135: null };
 const BASELINE_ALPHA = 0.03;
 const MIN_DELTA = 18;
@@ -729,7 +743,6 @@ function updateBaselines(mq2, mq7, mq135, gasStateNum) {
 }
 
 function classifyGasRelative(mq2, mq7, mq135) {
-  // MQ sensors are NOT selective. These labels are a "best guess" for display only.
   const items = [
     { sensor: "MQ7",   gasName: "Carbon Monoxide (CO)",                also: "exhaust-like gases",                        v: mq7,   b: baselines.mq7 },
     { sensor: "MQ2",   gasName: "Methane / LPG / Smoke (combustibles)",also: "hydrogen + other combustibles",            v: mq2,   b: baselines.mq2 },
@@ -755,7 +768,6 @@ function classifyGasRelative(mq2, mq7, mq135) {
 
   return { top, strong, detail };
 }
-// -----------------------------------------------------------------------------------
 
 async function tick() {
   try {
@@ -765,6 +777,8 @@ async function tick() {
 
     const banner = el("alertBanner");
     const bannerDetail = el("alertBannerDetail");
+    const fireBanner = el("fireAlertBanner");
+    const fireBannerDetail = el("fireAlertBannerDetail");
 
     if (!t) {
       setStatus("Aerobot Offline", true);
@@ -772,6 +786,7 @@ async function tick() {
       setText("gasState", "--");
       setLocoMode(null);
       banner.classList.add("hidden");
+      fireBanner.classList.add("hidden");
       return;
     }
 
@@ -795,6 +810,21 @@ async function tick() {
     const fireConf = t.fire_conf === null || t.fire_conf === undefined ? null : Number(t.fire_conf);
     if (fireConf === null || Number.isNaN(fireConf)) setText("fireConfVal", "--");
     else setText("fireConfVal", (fireConf * 100).toFixed(1) + "%");
+
+    const fireOn = !!t.fire_state;
+    const fireConfNum = (fireConf === null || fireConf === undefined) ? null : Number(fireConf);
+    const FIRE_BANNER_CONF_TH = 0.70;
+    const showFire = fireOn || (Number.isFinite(fireConfNum) && fireConfNum >= FIRE_BANNER_CONF_TH);
+
+    if (showFire) {
+      const parts = [];
+      if (fireOn) parts.push("State: ON");
+      if (Number.isFinite(fireConfNum)) parts.push("Confidence: " + (fireConfNum * 100).toFixed(1) + "%");
+      fireBannerDetail.textContent = parts.length ? parts.join(" · ") : "Fire signal active";
+      fireBanner.classList.remove("hidden");
+    } else {
+      fireBanner.classList.add("hidden");
+    }
 
     const mq2Val = Number(t.mq2);
     const mq7Val = Number(t.mq7);
@@ -832,6 +862,7 @@ async function tick() {
   } catch (e) {
     setStatus("Disconnected", true);
     el("alertBanner").classList.add("hidden");
+    el("fireAlertBanner").classList.add("hidden");
   }
 }
 
